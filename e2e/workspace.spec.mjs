@@ -1,0 +1,36 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+
+test('application changes, note history, backups, and deletion persist', async ({ page }, testInfo) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const company = 'Example Studio ' + testInfo.project.name + '-' + Date.now();
+  await page.goto('/');
+  await page.getByRole('button', { name: /Add application/ }).click();
+  await page.getByLabel('Company', { exact: true }).fill(company);
+  await page.getByLabel('Role', { exact: true }).fill('Frontend Engineer');
+  await page.getByRole('button', { name: 'Save application', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Edit application', exact: true })).toBeVisible();
+  await page.getByLabel('Add a note', { exact: true }).fill('Technical interview scheduled.');
+  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(page.getByText('Technical interview scheduled.', { exact: true })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('interview');
+  await page.getByRole('button', { name: 'Save application', exact: true }).click();
+  await expect(page.getByText('Moved from Applied to Interview.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.reload();
+  await page.getByRole('searchbox').fill(company);
+  await expect(page.getByRole('cell', { name: 'Interview', exact: true })).toBeVisible();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'JSON backup', exact: true }).click()]);
+  const backup = JSON.parse(await readFile(await download.path(), 'utf8'));
+  expect(backup.format).toBe('applyledger');
+  expect(backup.applications.some(row => row.company === company)).toBe(true);
+  await page.locator('input[type=file]').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
+  await expect(page.getByText(/Imported 0 applications; skipped \d+ existing IDs\./)).toBeVisible();
+  await expect(page.getByRole('cell', { name: company + ' Frontend Engineer', exact: true })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Open Frontend Engineer at ' + company, exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Delete application', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Open Frontend Engineer at ' + company, exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
